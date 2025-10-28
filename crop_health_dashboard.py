@@ -181,10 +181,8 @@ elif page == "1. Crop Health Diagnostics":
         if selected_crop != 'All':
             plot_df = df[df['Crop_Type'] == selected_crop]
 
-        # Using a smaller sample for performance in a faceted view
         sample_df = plot_df.sample(min(20000, len(plot_df)))
 
-        # Create separate figures for each health status to control color
         fig_healthy = px.density_heatmap(
             sample_df[sample_df['Crop_Health_Label_Str'] == 'Healthy'],
             x="NDVI", y="Chlorophyll_Content",
@@ -201,7 +199,6 @@ elif page == "1. Crop Health Diagnostics":
             nbinsx=30, nbinsy=30
         )
 
-        # Combine into subplots
         fig = make_subplots(
             rows=1, cols=2,
             subplot_titles=("Healthy", "Unhealthy"),
@@ -211,30 +208,26 @@ elif page == "1. Crop Health Diagnostics":
         fig.add_trace(fig_healthy.data[0], row=1, col=1)
         fig.add_trace(fig_unhealthy.data[0], row=1, col=2)
 
-        # Update layout and add annotations
         fig.update_layout(
             title_text=f"<b>Class Separation by NDVI & Chlorophyll for {selected_crop}</b>",
             font_family="sans-serif",
             title_font_size=20,
             showlegend=False,
-            coloraxis=None, # Hide the color axis from the original figures
+            coloraxis=None, 
         )
         fig.update_xaxes(title_text="NDVI", row=1, col=1)
         fig.update_xaxes(title_text="NDVI", row=1, col=2)
         fig.update_yaxes(title_text="Chlorophyll Content (a.u.)", row=1, col=1)
 
-        # Add threshold lines to both subplots
         fig.add_vline(x=0.4, line_width=1.5, line_dash="dash", line_color="black", row=1, col='all', annotation_text="NDVI ≈ 0.4", annotation_position="top right")
         fig.add_hline(y=1.5, line_width=1.5, line_dash="dash", line_color="black", row=1, col='all', annotation_text="Chlorophyll ≈ 1.5", annotation_position="bottom right")
         
         st.plotly_chart(fig, use_container_width=True)
 
-    # Statistical Test
     healthy_data = plot_df[plot_df['Crop_Health_Label_Str'] == 'Healthy']
     unhealthy_data = plot_df[plot_df['Crop_Health_Label_Str'] == 'Unhealthy']
     
     if len(healthy_data) > 1 and len(unhealthy_data) > 1:
-        # Using t-test as distributions are somewhat normal based on previous histograms
         ndvi_ttest = ttest_ind(healthy_data['NDVI'], unhealthy_data['NDVI'], nan_policy='omit')
         chloro_ttest = ttest_ind(healthy_data['Chlorophyll_Content'], unhealthy_data['Chlorophyll_Content'], nan_policy='omit')
         
@@ -277,7 +270,6 @@ elif page == "2. Pest Outbreak Management":
     col1, col2 = st.columns([1, 3])
     with col1:
         st.subheader("Filters")
-        # Allow selecting all or individual crops
         crop_options = ['All'] + list(df['Crop_Type'].unique())
         selected_crop_pest = st.selectbox("Select Crop Type", crop_options, key="pest_crop")
 
@@ -291,10 +283,8 @@ elif page == "2. Pest Outbreak Management":
         if selected_crop_pest != 'All':
             plot_df = df[df['Crop_Type'] == selected_crop_pest]
 
-        # Use a smaller sample to improve performance, especially for 'All'
         sample_df = plot_df.sample(min(10000, len(plot_df)))
 
-        # Define a professional, soft color palette
         color_map = {
             'Maize': '#85C1E9',  # Light Blue
             'Rice': '#76D7C4',   # Turquoise Green
@@ -303,7 +293,6 @@ elif page == "2. Pest Outbreak Management":
 
         fig = go.Figure()
 
-        # Add scatter traces for each crop type for better control
         for crop in sorted(sample_df['Crop_Type'].unique()):
             crop_df = sample_df[sample_df['Crop_Type'] == crop]
             fig.add_trace(go.Scatter(
@@ -320,14 +309,12 @@ elif page == "2. Pest Outbreak Management":
                 text=[f"Crop: {r['Crop_Type']}<br>Pest Damage: {r['Pest_Damage']:.1f}%<br>Yield: {r['Expected_Yield']:.0f} kg/ha" for i, r in crop_df.iterrows()]
             ))
 
-        # Add LOWESS trendlines using Plotly Express and extract them
         if selected_crop_pest == 'All':
             trend_fig = px.scatter(
                 sample_df, x='Pest_Damage', y='Expected_Yield', color='Crop_Type',
                 trendline='lowess', color_discrete_map=color_map
             )
         else:
-            # Need to handle single color case for trendline
             trend_fig = px.scatter(
                 sample_df, x='Pest_Damage', y='Expected_Yield',
                 trendline='lowess', color_discrete_sequence=[color_map.get(selected_crop_pest)]
@@ -335,13 +322,11 @@ elif page == "2. Pest Outbreak Management":
 
         for trace in trend_fig.data:
             if 'trendline' in trace.name:
-                # Extract crop name from trendline trace name
                 crop_name = trace.name.split(',')[0]
                 trace.line.width = 3 # Make trendline thicker
                 trace.name = f"Trend ({crop_name})" # Clarify legend
                 fig.add_trace(trace)
 
-        # Add shaded region for high-risk zone
         fig.add_vrect(
             x0=70, x1=100,
             fillcolor="rgba(231, 76, 60, 0.15)", line_width=0,
@@ -408,7 +393,6 @@ elif page == "3. Yield Optimization Factors":
         corr_matrix = df.select_dtypes(include=np.number).corr()
         yield_corr = corr_matrix[['Expected_Yield']].drop('Expected_Yield').sort_values(by='Expected_Yield', ascending=False)
         
-        # Separate positive and negative correlations
         top_pos = yield_corr.head(num_features)
         top_neg = yield_corr.tail(num_features)
         
@@ -566,7 +550,6 @@ elif page == "5. Environmental Stress Analysis":
         
         for i, factor in enumerate(env_factors):
             row, col = (i // 2) + 1, (i % 2) + 1
-            # Filter data for the box plot to ensure it's dynamic
             filtered_stress_df = stress_df[stress_df['Stress_Level'].isin(['High Stress', 'Low Stress'])]
             sub_fig = px.box(filtered_stress_df, x='Stress_Level', y=factor, color='Stress_Level', 
                              color_discrete_map={'High Stress': '#E45756', 'Low Stress': '#4C78A8'})
@@ -644,7 +627,6 @@ elif page == "6. Disease Risk Assessment":
         
         fig.update_coloraxes(colorbar_title="Health Index<br>(0=Poor, 1=Healthy)")
 
-        # Add annotation for high-risk zone
         fig.add_shape(
             type="rect",
             x0=30, y0=75, x1=plot_df['Temperature'].max(), y1=plot_df['Humidity'].max(),
@@ -701,7 +683,6 @@ elif page == "7. Resource Use Efficiency":
 
     with col2:
         plot_df = df[df['Crop_Type'] == selected_crop_resource]
-        # Sample the data to avoid performance issues with 3D plots
         sample_df = plot_df.sample(min(2000, len(plot_df)))
 
         fig = px.scatter_3d(
@@ -782,11 +763,9 @@ elif page == "8. Growth Stage Vulnerability":
         """)
 
     with col2:
-        # Filter data for the selected crop
         plot_df = df[df['Crop_Type'] == selected_crop_growth].copy()
         
         if not plot_df.empty:
-            # Descriptive labels for sorting and display
             stage_map = {
                 1: '1. Germination',
                 2: '2. Vegetative',
@@ -794,7 +773,6 @@ elif page == "8. Growth Stage Vulnerability":
                 4: '4. Grain Filling/Fruiting'
             }
             
-            # Safely create the new column and handle potential missing keys
             plot_df['Growth_Stage_Desc'] = plot_df['Crop_Growth_Stage'].map(stage_map)
             plot_df.dropna(subset=['Growth_Stage_Desc'], inplace=True)
 
@@ -813,7 +791,6 @@ elif page == "8. Growth Stage Vulnerability":
                     points=False
                 )
                 
-                # Find and annotate the most vulnerable stage
                 median_stress = plot_df.groupby('Growth_Stage_Desc')['Crop_Stress_Indicator'].median()
                 if not median_stress.empty:
                     most_vulnerable_stage = median_stress.idxmax()

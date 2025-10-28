@@ -69,32 +69,95 @@ st.sidebar.info("This dashboard is based on a comprehensive dataset of crop heal
 
 # Overview Page
 if page == "Dashboard Overview":
-    st.title("Dashboard Overview")
+    st.title("🌾 Executive Summary: The State of Our Fields")
     st.markdown("""
-    Welcome to the Precision Farming Analytics Dashboard. This tool leverages a rich agricultural dataset to provide actionable insights for farmers, researchers, and agronomists.
+    Welcome to your agricultural analytics dashboard. This page presents an executive summary of your farm's condition based on the latest data. Use these insights to understand the big picture and identify areas requiring further attention.
     
-    **Select an analysis case from the sidebar to begin.**
+    **Select an analysis case from the sidebar for a deeper exploration.**
     """)
+
+    st.markdown("---")
+
+    # --- Key Performance Indicators (KPIs) ---
+    st.header("Key Performance Indicators (KPIs)")
+    col1, col2, col3, col4 = st.columns(4)
     
-    col1, col2, col3 = st.columns(3)
+    total_data_points = len(df)
     healthy_pct = (df['Crop_Health_Label'].value_counts(normalize=True).get(1, 0) * 100)
     total_yield = df['Expected_Yield'].sum() / 1000 # to tonnes
-    pest_hotspots_pct = (df['Pest_Hotspots'].value_counts(normalize=True).get(1, 0) * 100)
+    pest_hotspots_pct = (df[df['Pest_Hotspots'] > 0].shape[0] / total_data_points * 100)
 
-    col1.metric("Total Data Points", f"{len(df):,}")
-    col2.metric("Healthy Crops Percentage", f"{healthy_pct:.1f}%")
-    col3.metric("Total Expected Yield (tonnes)", f"{total_yield:,.0f}")
+    col1.metric("Total Observed Fields", f"{total_data_points:,}")
+    col2.metric("Healthy Fields Percentage", f"{healthy_pct:.1f}%")
+    col3.metric("Total Estimated Yield (tonnes)", f"{total_yield:,.0f}")
+    col4.metric("Fields Affected by Pests", f"{pest_hotspots_pct:.1f}%", delta_color="inverse")
 
-    st.subheader("Data Distribution at a Glance")
-    col1, col2 = st.columns(2)
+    st.markdown("---")
+
+    # --- Detailed Analysis Section ---
+    st.header("Detailed Analysis")
     
+    col1, col2 = st.columns(2)
+
     with col1:
-        fig = px.pie(df, names='Crop_Type', title='Crop Type Distribution', hole=0.3)
+        st.subheader("Crop Type Distribution")
+        crop_counts = df['Crop_Type'].value_counts().sort_values(ascending=True)
+        fig = px.bar(crop_counts, 
+                     x=crop_counts.values, 
+                     y=crop_counts.index, 
+                     orientation='h',
+                     labels={'x': 'Number of Fields', 'y': 'Crop Type'},
+                     text=crop_counts.values)
+        fig.update_layout(showlegend=False, yaxis_title=None)
+        fig.update_traces(textposition='inside', marker_color='#4C78A8')
         st.plotly_chart(fig, use_container_width=True)
+        st.markdown("This chart shows the number of fields cultivated for each crop type. *Maize* is the most cultivated crop.")
 
     with col2:
-        fig = px.pie(df, names='Crop_Health_Label_Str', title='Overall Crop Health Status', hole=0.3, color_discrete_map={'Unhealthy':'red', 'Healthy':'green'})
+        st.subheader("Health Distribution by Crop")
+        health_by_crop = df.groupby('Crop_Type')['Crop_Health_Label_Str'].value_counts(normalize=True).mul(100).rename('percentage').reset_index()
+        fig = px.bar(health_by_crop, 
+                     x='Crop_Type', 
+                     y='percentage', 
+                     color='Crop_Health_Label_Str',
+                     barmode='group',
+                     labels={'percentage': 'Percentage (%)', 'Crop_Type': 'Crop Type'},
+                     color_discrete_map={'Unhealthy':'#E45756', 'Healthy':'#54A24B'})
+        fig.update_layout(yaxis_title="Percentage of Fields (%)")
         st.plotly_chart(fig, use_container_width=True)
+        st.markdown("A comparison of the percentage of healthy and unhealthy fields for each crop type. This helps identify which crops are most vulnerable.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    col3, col4 = st.columns(2)
+
+    with col3:
+        st.subheader("Yield Potential by Crop")
+        yield_by_crop = df.groupby('Crop_Type')['Expected_Yield'].mean().sort_values(ascending=False)
+        fig = px.bar(yield_by_crop,
+                     x=yield_by_crop.index,
+                     y=yield_by_crop.values,
+                     labels={'y': 'Average Yield (kg/ha)', 'x': 'Crop Type'},
+                     color=yield_by_crop.values,
+                     color_continuous_scale='Aggrnyl')
+        fig.update_layout(showlegend=False, coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown("This chart displays the average potential yield for each crop type. *Rice* shows the highest potential yield per hectare.")
+
+    with col4:
+        st.subheader("Initial Insights & Recommendations")
+        st.info(
+            """
+            **Key Findings:**
+            1.  **Maize Dominance:** Maize is the most widely planted crop, making it a primary focus for optimization.
+            2.  **Wheat Vulnerability:** Wheat shows a relatively high percentage of unhealthy fields compared to other crops, indicating potential systemic issues.
+            3.  **Rice Productivity:** Although not as widely planted as maize, Rice has the highest potential yield per hectare, making it a valuable asset.
+
+            **Initial Recommendations:**
+            -   **Focus Investigation:** Use this dashboard to investigate why Wheat has a lower health rate. Start with *Case 5 (Environmental Stress)* or *Case 6 (Disease Risk)*.
+            -   **Improvement Opportunity:** Further analysis of Rice could reveal best practices that might be applicable to other crops to boost their yield.
+            """
+        )
 
 # Case 1: Crop Health Diagnostics
 elif page == "1. Crop Health Diagnostics":
@@ -220,10 +283,7 @@ elif page == "2. Pest Outbreak Management":
 
         st.subheader("Analysis")
         st.markdown("""
-        This enhanced scatter plot reveals the nuanced relationship between pest damage and yield. Key features include:
-        - **Reduced Overplotting:** Lower opacity helps visualize data density.
-        - **Clear Trendlines:** Bold, labeled LOWESS curves show the impact pattern for each crop.
-        - **High-Risk Zone:** The shaded red area highlights where pest damage becomes critical (>70%).
+        This enhanced scatter plot reveals the nuanced relationship between pest damage and yield.
         """)
 
     with col2:

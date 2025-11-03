@@ -111,7 +111,7 @@ if page == "Dashboard Overview":
         fig.update_layout(showlegend=False, yaxis_title=None)
         fig.update_traces(textposition='inside', marker_color='#4C78A8')
         st.plotly_chart(fig, use_container_width=True)
-        st.markdown("This chart shows the number of fields cultivated for each crop type. *Maize* is the most cultivated crop.")
+        st.markdown("This chart shows the number of fields cultivated for each crop type. *Wheat* is the most cultivated crop.")
 
     with col2:
         st.subheader("Health Distribution by Crop")
@@ -142,20 +142,20 @@ if page == "Dashboard Overview":
                      color_continuous_scale='Aggrnyl')
         fig.update_layout(showlegend=False, coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
-        st.markdown("This chart displays the average potential yield for each crop type. *Rice* shows the highest potential yield per hectare.")
+        st.markdown("This chart displays the average potential yield for each crop type. *Maize* shows the highest potential yield per hectare.")
 
     with col4:
         st.subheader("Initial Insights & Recommendations")
         st.info(
             """
             **Key Findings:**
-            1.  **Maize Dominance:** Maize is the most widely planted crop, making it a primary focus for optimization.
-            2.  **Wheat Vulnerability:** Wheat shows a relatively high percentage of unhealthy fields compared to other crops, indicating potential systemic issues.
-            3.  **Rice Productivity:** Although not as widely planted as maize, Rice has the highest potential yield per hectare, making it a valuable asset.
+            1.  **Wheat Dominance:** Wheat is the most widely planted crop, making it a primary focus for optimization.
+            2.  **Rice Vulnerability:** Rice shows a relatively high percentage of unhealthy fields compared to other crops, indicating potential systemic issues.
+            3.  **Maize Productivity:** Although not as widely planted as wheat, maize has the highest potential yield per hectare, making it a valuable asset.
 
             **Initial Recommendations:**
-            -   **Focus Investigation:** Use this dashboard to investigate why Wheat has a lower health rate. Start with *Case 5 (Environmental Stress)* or *Case 6 (Disease Risk)*.
-            -   **Improvement Opportunity:** Further analysis of Rice could reveal best practices that might be applicable to other crops to boost their yield.
+            -   **Focus Investigation:** Use this dashboard to investigate why Rice has a lower health rate. Start with *Case 5 (Environmental Stress)* or *Case 6 (Disease Risk)*.
+            -   **Improvement Opportunity:** Further analysis of Maize could reveal best practices that might be applicable to other crops to boost their yield.
             """
         )
 

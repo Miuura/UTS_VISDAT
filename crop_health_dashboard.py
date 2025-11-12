@@ -5,6 +5,18 @@ import plotly.graph_objects as go
 import numpy as np
 from scipy.stats import mannwhitneyu, ttest_ind
 from plotly.subplots import make_subplots
+import warnings
+
+# Workaround: suppress a known RuntimeWarning that can appear in some
+# Streamlit versions when cache expiration triggers an internal coroutine
+# that isn't awaited. This is a targeted suppression for the exact
+# message; the recommended long-term fix is to upgrade Streamlit to a
+# version where the bug is resolved.
+warnings.filterwarnings(
+    "ignore",
+    category=RuntimeWarning,
+    message="coroutine 'expire_cache' was never awaited"
+)
 
 # ======================================================================================
 # Page Configuration
@@ -23,7 +35,7 @@ st.set_page_config(
 def load_data():
     """Loads the agriculture dataset and performs initial preprocessing."""
     try:
-        df = pd.read_csv('https://drive.google.com/uc?id=1sRPALLqIM9bWE_5Erf4R4FEEO1eio4de')
+        df = pd.read_csv('agriculture_dataset.csv')
         # Basic preprocessing
         df['Crop_Health_Label_Str'] = df['Crop_Health_Label'].map({1: 'Healthy', 0: 'Unhealthy'})
         df['Rainfall_Category'] = pd.cut(df['Rainfall'], bins=[0, 200, 600, np.inf], labels=['Low', 'Medium', 'High'])
@@ -675,74 +687,149 @@ elif page == "7. Resource Use Efficiency":
     with col1:
         st.subheader("Filters")
         selected_crop_resource = st.selectbox("Select Crop Type", df['Crop_Type'].unique(), key="resource_crop")
+        zone_mode = st.radio("Optimal Zone Mode", ["Guideline (Agronomy)", "Data-driven (Top Yield)"], index=0, key="resource_zone_mode")
+        if zone_mode == "Data-driven (Top Yield)":
+            ph_bins = st.slider("Number of Soil pH bins", 8, 30, 15, key="resource_ph_bins")
+            om_bins = st.slider("Number of Organic Matter bins", 8, 30, 15, key="resource_om_bins")
+            top_quantile = st.slider("Top yield quantile for optimal zone", 60, 95, 80, step=5, key="resource_top_q")
         
         st.subheader("Analysis")
         st.markdown("""
-        This **3D Scatter Plot** visualizes the relationship between Soil pH, Organic Matter, and Expected Yield. The color of each point indicates the yield, and a semi-transparent 3D shape highlights the 'Optimal Zone' where these factors converge for maximum productivity.
+        This section visualizes the relationship between Soil pH, Organic Matter, and Expected Yield.
+        - In **Guideline (Agronomy)** mode, the optimal zone is a standard agronomic range (pH ~6.0–7.0, OM ~2.5–5.0%).
+        - In **Data-driven (Top Yield)** mode, the optimal zone is computed from your data as the top yield quantile over a pH–OM grid.
         """)
 
     with col2:
         plot_df = df[df['Crop_Type'] == selected_crop_resource]
         sample_df = plot_df.sample(min(2000, len(plot_df)))
 
-        fig = px.scatter_3d(
-            sample_df,
-            x='Soil_pH',
-            y='Organic_Matter',
-            z='Expected_Yield',
-            color='Expected_Yield',
-            color_continuous_scale='Viridis',
-            title=f'Yield vs. Soil pH & Organic Matter for {selected_crop_resource}',
-            labels={
-                "Soil_pH": "Soil pH",
-                "Organic_Matter": "Organic Matter (%)",
-                "Expected_Yield": "Expected Yield (kg/ha)"
-            }
-        )
-
-        # Add a 3D shape to represent the optimal zone
-        fig.add_trace(go.Mesh3d(
-            x=[6.0, 7.0, 7.0, 6.0, 6.0, 7.0, 7.0, 6.0],
-            y=[2.5, 2.5, 5.0, 5.0, 2.5, 2.5, 5.0, 5.0],
-            z=[sample_df['Expected_Yield'].min()] * 4 + [sample_df['Expected_Yield'].max()] * 4,
-            i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
-            j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
-            k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
-            opacity=0.1,
-            color='cyan',
-            name='Optimal Zone',
-            showlegend=True
-        ))
-        
-        fig.update_layout(
-            scene=dict(
-                xaxis_title='Soil pH',
-                yaxis_title='Organic Matter (%)',
-                zaxis_title='Expected Yield (kg/ha)'
-            ),
-            legend=dict(yanchor="top", y=0.9, xanchor="left", x=0.1)
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        if zone_mode == "Guideline (Agronomy)":
+            fig = px.scatter_3d(
+                sample_df,
+                x='Soil_pH',
+                y='Organic_Matter',
+                z='Expected_Yield',
+                color='Expected_Yield',
+                color_continuous_scale='Viridis',
+                title=f'Yield vs. Soil pH & Organic Matter for {selected_crop_resource}',
+                labels={
+                    "Soil_pH": "Soil pH",
+                    "Organic_Matter": "Organic Matter (%)",
+                    "Expected_Yield": "Expected Yield (kg/ha)"
+                }
+            )
+            # Add a 3D shape to represent the guideline optimal zone
+            fig.add_trace(go.Mesh3d(
+                x=[6.0, 7.0, 7.0, 6.0, 6.0, 7.0, 7.0, 6.0],
+                y=[2.5, 2.5, 5.0, 5.0, 2.5, 2.5, 5.0, 5.0],
+                z=[sample_df['Expected_Yield'].min()] * 4 + [sample_df['Expected_Yield'].max()] * 4,
+                i=[7, 0, 0, 0, 4, 4, 6, 6, 4, 0, 3, 2],
+                j=[3, 4, 1, 2, 5, 6, 5, 2, 0, 1, 6, 3],
+                k=[0, 7, 2, 3, 6, 7, 1, 1, 5, 5, 7, 6],
+                opacity=0.1,
+                color='cyan',
+                name='Optimal Zone (Guideline)',
+                showlegend=True
+            ))
+            fig.update_layout(
+                scene=dict(
+                    xaxis_title='Soil pH',
+                    yaxis_title='Organic Matter (%)',
+                    zaxis_title='Expected Yield (kg/ha)'
+                ),
+                legend=dict(yanchor="top", y=0.9, xanchor="left", x=0.1)
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Data-driven: grid pH–OM, compute median yield per cell, highlight top quantile cells
+            grid_df = plot_df[['Soil_pH', 'Organic_Matter', 'Expected_Yield']].dropna().copy()
+            if len(grid_df) == 0:
+                st.warning("No data available to compute data-driven optimal zone.")
+            else:
+                grid_df['ph_bin'] = pd.cut(grid_df['Soil_pH'], bins=ph_bins)
+                grid_df['om_bin'] = pd.cut(grid_df['Organic_Matter'], bins=om_bins)
+                agg = grid_df.groupby(['ph_bin', 'om_bin'])['Expected_Yield'].median().reset_index(name='median_yield')
+                # Bin centers for plotting
+                def bin_center(interval):
+                    try:
+                        return (interval.left + interval.right) / 2
+                    except Exception:
+                        return np.nan
+                agg['ph_center'] = agg['ph_bin'].apply(bin_center)
+                agg['om_center'] = agg['om_bin'].apply(bin_center)
+                agg = agg.dropna(subset=['ph_center', 'om_center'])
+                if len(agg) == 0:
+                    st.warning("Insufficient binned data to visualize.")
+                else:
+                    # Determine threshold for top quantile
+                    q = np.nanpercentile(agg['median_yield'], top_quantile)
+                    agg['is_optimal'] = agg['median_yield'] >= q
+                    # Create base heatmap of median yield
+                    heatmap_fig = go.Figure()
+                    heatmap_fig.add_trace(go.Heatmap(
+                        x=agg['ph_center'],
+                        y=agg['om_center'],
+                        z=agg['median_yield'],
+                        colorscale='Viridis',
+                        colorbar_title='Median Yield'
+                    ))
+                    # Overlay mask for optimal cells (top quantile)
+                    # Use a second heatmap with transparent color for 0 and cyan for 1
+                    mask_z = agg['is_optimal'].astype(int)
+                    overlay_colorscale = [
+                        [0.0, 'rgba(0,0,0,0)'],
+                        [0.5, 'rgba(0,0,0,0)'],
+                        [1.0, 'rgba(0,255,255,0.35)']
+                    ]
+                    heatmap_fig.add_trace(go.Heatmap(
+                        x=agg['ph_center'],
+                        y=agg['om_center'],
+                        z=mask_z,
+                        colorscale=overlay_colorscale,
+                        showscale=False
+                    ))
+                    heatmap_fig.update_layout(
+                        title=f'Data-driven Optimal Zone for {selected_crop_resource} (Top {top_quantile}% median yield)',
+                        xaxis_title='Soil pH (bin center)',
+                        yaxis_title='Organic Matter (%) (bin center)',
+                    )
+                    # Add explanatory annotation
+                    heatmap_fig.add_annotation(
+                        xref="paper", yref="paper", x=0.01, y=1.08, showarrow=False,
+                        text="Cyan overlay = cells in top yield quantile (data-driven optimal zone)"
+                    )
+                    st.plotly_chart(heatmap_fig, use_container_width=True)
 
     st.subheader("Professional Insights & Recommendations")
     col1, col2 = st.columns(2)
     with col1:
-        st.info("""
-        **Key Insight:**
-        The plot reveals a "ridge" of high yield. Yield peaks when soil pH is near-neutral (6.5-7.0) and organic matter is in the 3-5% range. Crucially, it shows that simply adding more organic matter to a soil with poor pH does not improve yield. Both factors must be managed in tandem.
-        """)
-        st.success("""
-        **Potential Benefit:**
-        This analysis enables **precision soil management**. Instead of uniform fertilizer application, farmers can apply lime to acidic areas and targeted organic compost to deficient zones, leading to a more efficient use of inputs and a potential **cost saving of 15-20%** on soil amendments.
-        """)
+        if zone_mode == "Data-driven (Top Yield)":
+            st.info("""
+            **Key Insight (data-driven):**
+            The cyan overlay marks pH–OM cells whose median yield lies in the top quantile for the selected crop. Near‑neutral pH (~6–7) combined with OM around ≥3% most often forms the optimal band; extreme pH rarely enters the top-yield zone even with high OM.
+            """)
+            st.success("""
+            **Potential Benefit:**
+            Steer fields toward the cyan band: correct pH toward 6–7 first, then build OM to ≥3%+. This sequencing maximizes the chance of reaching top‑yield conditions and avoids wasting inputs when pH is off.
+            """)
+        else:
+            st.info("""
+            **Key Insight (guideline):**
+            Yield generally peaks near‑neutral pH (6.5–7.0) with OM in the 3–5% range. Adding OM alone does not compensate for improper pH—both must be managed together.
+            """)
+            st.success("""
+            **Potential Benefit:**
+            Use the guideline zone to prioritize **pH correction** on acidic soils, then target OM in deficient patches. This improves input efficiency and can reduce amendment costs by **15–20%**.
+            """)
     with col2:
         st.warning("""
         **AI & ML Potential:**
-        A **Gaussian Process Regressor** would be ideal here. It can model the complex, non-linear surface of this 3D relationship and also provide a confidence interval for its yield predictions, which is useful for quantifying uncertainty in decision-making.
+        Fit a **surface model** (e.g., Gaussian Process/Gradient Boosting) on yield ~ pH + OM to derive optimized contours and quantify uncertainty. Use SHAP/partial dependence to explain why specific pH–OM ranges are optimal for each crop.
         """)
         st.error("""
         **Potential Risk:**
-        The availability of nutrients is also affected by soil type (e.g., clay, sand), which is not captured in this dataset. Applying these findings universally without considering soil texture could lead to suboptimal results.
+        Results depend on binning/sampling density (data-driven mode) and ignore soil texture/salinity/drainage. Validate with field context, ensure minimum data per cell, and avoid extrapolating beyond observed pH–OM ranges.
         """)
 
 # Case 8: Growth Stage Vulnerability
@@ -759,7 +846,7 @@ elif page == "8. Growth Stage Vulnerability":
         
         st.subheader("Analysis")
         st.markdown("""
-        This **Violin Plot** shows the stress distribution at each growth stage. The stage with the highest median stress is automatically highlighted as the most vulnerable period.
+        This view shows the **median stress by growth stage** with error bars for variability (IQR). Labels display the share of fields above a high-stress threshold, clarifying which stage is most vulnerable.
         """)
 
     with col2:
@@ -777,39 +864,99 @@ elif page == "8. Growth Stage Vulnerability":
             plot_df.dropna(subset=['Growth_Stage_Desc'], inplace=True)
 
             if not plot_df.empty:
-                fig = px.violin(
-                    plot_df.sort_values('Growth_Stage_Desc'),
-                    x='Growth_Stage_Desc',
-                    y='Crop_Stress_Indicator',
-                    color='Growth_Stage_Desc',
-                    box=True,
-                    title=f'Stress Distribution Across Growth Stages for {selected_crop_growth}',
-                    labels={
-                        "Growth_Stage_Desc": "Crop Growth Stage",
-                        "Crop_Stress_Indicator": "Crop Stress Indicator (0-100)"
-                    },
-                    points=False
+                
+                grouped = plot_df.groupby('Growth_Stage_Desc')['Crop_Stress_Indicator']
+                summary = grouped.agg(
+                    median_stress='median',
+                    q1=lambda s: s.quantile(0.25),
+                    q3=lambda s: s.quantile(0.75),
+                    count='count'
+                ).reset_index()
+                summary['iqr'] = summary['q3'] - summary['q1']
+                
+                high_stress_threshold = 70
+                high_share = (
+                    plot_df.assign(high=(plot_df['Crop_Stress_Indicator'] > high_stress_threshold))
+                    .groupby('Growth_Stage_Desc')['high']
+                    .mean()
+                    .reindex(summary['Growth_Stage_Desc'])
+                    .fillna(0)
+                )
+                summary['high_pct'] = (high_share.values * 100).round(1)
+                
+                summary['error_y'] = summary['q3'] - summary['median_stress']
+                
+                order = ['1. Germination', '2. Vegetative', '3. Flowering', '4. Grain Filling/Fruiting']
+                summary['Growth_Stage_Desc'] = pd.Categorical(summary['Growth_Stage_Desc'], categories=order, ordered=True)
+                summary = summary.sort_values('Growth_Stage_Desc')
+                
+                most_vulnerable_stage = summary.loc[summary['median_stress'].idxmax(), 'Growth_Stage_Desc']
+                bar_colors = ['#A6CEE3' if stage != most_vulnerable_stage else '#E31A1C' for stage in summary['Growth_Stage_Desc']]
+                fig = go.Figure()
+                fig.add_trace(go.Bar(
+                    x=summary['Growth_Stage_Desc'],
+                    y=summary['median_stress'],
+                    error_y=dict(type='data', array=summary['error_y'], visible=True, thickness=1.2, color='rgba(0,0,0,0.5)'),
+                    marker_color=bar_colors,
+                    hovertemplate="<b>%{x}</b><br>Median Stress: %{y:.1f}<br>High Stress (>70): %{customdata:.1f}%<extra></extra>",
+                    customdata=summary['high_pct']
+                ))
+                
+                fig.update_traces(text=[f"{p:.1f}%" for p in summary['high_pct']], textposition='outside')
+                fig.update_layout(
+                    title=f'Stress by Growth Stage for {selected_crop_growth} (median ± IQR upper)',
+                    xaxis_title='Crop Growth Stage',
+                    yaxis_title='Crop Stress Indicator (0-100)',
+                    uniformtext_minsize=10,
+                    uniformtext_mode='hide',
+                    showlegend=False
                 )
                 
-                median_stress = plot_df.groupby('Growth_Stage_Desc')['Crop_Stress_Indicator'].median()
-                if not median_stress.empty:
-                    most_vulnerable_stage = median_stress.idxmax()
-                    max_stress_value = median_stress.max()
-                    
-                    fig.add_annotation(
-                        x=most_vulnerable_stage,
-                        y=max_stress_value,
-                        text="Most Vulnerable Stage",
-                        showarrow=True,
-                        arrowhead=1,
-                        ax=-60,
-                        ay=-40,
-                        font=dict(color="black", size=12, weight="bold"),
-                        bgcolor="rgba(255, 255, 255, 0.7)"
-                    )
-                
-                fig.update_layout(showlegend=False)
+                fig.add_annotation(
+                    x=most_vulnerable_stage,
+                    y=float(summary.loc[summary['Growth_Stage_Desc'] == most_vulnerable_stage, 'median_stress']),
+                    text="Most Vulnerable",
+                    showarrow=True,
+                    arrowhead=1,
+                    ax=0,
+                    ay=-40,
+                    bgcolor="rgba(255,255,255,0.7)"
+                )
                 st.plotly_chart(fig, use_container_width=True)
+                
+                # Dynamic crop-specific explanation
+                mv_stage_str = str(most_vulnerable_stage)
+                mv_median = float(summary.loc[summary['Growth_Stage_Desc'] == most_vulnerable_stage, 'median_stress'])
+                mv_high_pct = float(summary.loc[summary['Growth_Stage_Desc'] == most_vulnerable_stage, 'high_pct'])
+                mv_q3 = float(summary.loc[summary['Growth_Stage_Desc'] == most_vulnerable_stage, 'q3'])
+                mv_q1 = float(summary.loc[summary['Growth_Stage_Desc'] == most_vulnerable_stage, 'q1'])
+                mv_iqr = mv_q3 - mv_q1
+                
+                crop_reason = {
+                    'Wheat': (
+                        "The reproductive phase (especially Flowering–Grain Filling) in wheat is highly sensitive to heat "
+                        "and water deficit. Stress at this stage disrupts pollination and grain filling."
+                    ),
+                    'Rice': (
+                        "Rice becomes vulnerable from late vegetative into flowering due to its need for stable water levels "
+                        "and high humidity; poor aeration or hot, dry winds elevate stress and disease pressure."
+                    ),
+                    'Maize': (
+                        "Maize is most vulnerable at tasseling/silking (Flowering). Short water or heat stress during this window "
+                        "reduces kernel set and spikes the stress indicator."
+                    )
+                }.get(selected_crop_growth, "Reproductive phases are generally the most sensitive due to flower and seed formation.")
+                
+                st.subheader("Why is this stage most vulnerable?")
+                st.markdown(f"""
+                - **Crop**: `{selected_crop_growth}`
+                - **Most Vulnerable Stage**: `{mv_stage_str}`
+                - **Median Stress**: `{mv_median:.1f}`
+                - **IQR (Q1–Q3)**: `{mv_q1:.1f} – {mv_q3:.1f}` (width `{mv_iqr:.1f}`)
+                - **High-Stress Share (>70)**: `{mv_high_pct:.1f}%`
+                
+                **Agronomic rationale:** {crop_reason}
+                """)
             else:
                 st.warning(f"No data available for the growth stages of {selected_crop_growth}.")
         else:
@@ -819,12 +966,13 @@ elif page == "8. Growth Stage Vulnerability":
     col1, col2 = st.columns(2)
     with col1:
         st.info("""
-        **Key Insight:**
-        The 'Flowering' and 'Grain Filling' stages not only show higher median stress but also a wider shape in the upper stress range, indicating a higher probability of experiencing significant stress. This confirms they are the most critical periods where plants are most vulnerable to environmental pressures.
+        **Key Insight (data-driven):**
+        The highlighted red bar is the stage with the highest median stress. Use the labels above bars to read the share of >70 stress, and the upper IQR error bar to judge tail risk. 
+        Together, these show which stage is most vulnerable for the currently selected crop and how frequently severe stress occurs at that stage.
         """)
         st.success("""
         **Potential Benefit:**
-        Resources (e.g., supplemental irrigation, protective measures) can be prioritized and concentrated during these critical windows. This dynamic allocation strategy ensures maximum protection when it matters most, improving the overall **resource-to-yield conversion ratio**.
+        Prioritize resources (e.g., supplemental irrigation, heat/wind protection, phase-timed nutrition) in the identified vulnerable window. This aligns interventions with risk peaks and improves the **resource-to-yield conversion ratio**.
         """)
     with col2:
         st.warning("""
@@ -833,7 +981,7 @@ elif page == "8. Growth Stage Vulnerability":
         """)
         st.error("""
         **Potential Risk:**
-        The definition and timing of growth stages can be subjective and vary with local conditions. An automated system for classifying growth stage from imagery would be required for this analysis to be scalable and objective.
+        Stage labelling and timing can vary by field conditions, and some stages may have fewer samples. Interpret small-sample stages carefully and consider smoothing or pooling adjacent stages when needed.
         """)
 
 # Case 9: Soil Health Management
@@ -846,60 +994,99 @@ elif page == "9. Soil Health Management":
     col1, col2 = st.columns([1, 3])
     with col1:
         st.subheader("Filters")
-        health_status_filter = st.selectbox("Show data for", ['Unhealthy Crops', 'Healthy Crops'], key="soil_health_filter")
-        ph_bins = st.slider("Number of pH Bins", 5, 20, 10)
-        om_bins = st.slider("Number of Organic Matter Bins", 5, 20, 10)
+        ph_bins = st.slider("Number of pH Bins", 5, 30, 15)
+        om_bins = st.slider("Number of Organic Matter Bins", 5, 30, 15)
+        healthy_threshold = st.slider("Highlight cells with Healthy rate ≥", 50, 95, 70, step=5, key="soil_health_rate_threshold")
 
         st.subheader("Analysis")
         st.markdown("""
-        This bubble chart plots fields based on binned ranges of **Soil pH** and **Organic Matter**. The size of each bubble represents the number of fields within that specific combination of ranges. This aggregation makes it easier to spot broad patterns in soil profiles.
+        This heatmap shows the likelihood of being **Healthy** for each pH–OM cell (share of Healthy per cell).
+        Cyan overlay highlights cells above the chosen healthy-rate threshold, and contour lines help reveal boundaries.
         """)
 
     with col2:
-        health_label = 0 if health_status_filter == 'Unhealthy Crops' else 1
-        plot_df = df[df['Crop_Health_Label'] == health_label].copy()
-        
-        # Bin the data
-        plot_df['ph_bin'] = pd.cut(plot_df['Soil_pH'], bins=ph_bins)
-        plot_df['om_bin'] = pd.cut(plot_df['Organic_Matter'], bins=om_bins)
-        
-        # Group by bins
-        bubble_df = plot_df.groupby(['ph_bin', 'om_bin']).size().reset_index(name='count')
-        bubble_df['ph_bin_str'] = bubble_df['ph_bin'].astype(str)
-        bubble_df['om_bin_str'] = bubble_df['om_bin'].astype(str)
-
-
-        fig = px.scatter(bubble_df,
-                         x='ph_bin_str',
-                         y='om_bin_str',
-                         size='count',
-                         color='count',
-                         color_continuous_scale='Plasma',
-                         size_max=60,
-                         title=f'Aggregated Soil Profile for {health_status_filter}',
-                         labels={'ph_bin_str': 'Soil pH Range', 'om_bin_str': 'Organic Matter Range'})
-        fig.update_xaxes(tickangle=45)
-        st.plotly_chart(fig, use_container_width=True)
+        map_df = df[['Soil_pH', 'Organic_Matter', 'Crop_Health_Label']].dropna().copy()
+        if len(map_df) == 0:
+            st.warning("No data available to compute heatmaps.")
+        else:
+            map_df['ph_bin'] = pd.cut(map_df['Soil_pH'], bins=ph_bins)
+            map_df['om_bin'] = pd.cut(map_df['Organic_Matter'], bins=om_bins)
+            agg = map_df.groupby(['ph_bin', 'om_bin'])['Crop_Health_Label'].mean().reset_index(name='healthy_rate')
+            def bin_center(interval):
+                try:
+                    return (interval.left + interval.right) / 2
+                except Exception:
+                    return np.nan
+            agg['ph_center'] = agg['ph_bin'].apply(bin_center)
+            agg['om_center'] = agg['om_bin'].apply(bin_center)
+            agg = agg.dropna(subset=['ph_center', 'om_center'])
+            if len(agg) == 0:
+                st.warning("Insufficient binned data to visualize.")
+            else:
+                hm = go.Figure()
+                hm.add_trace(go.Heatmap(
+                    x=agg['ph_center'],
+                    y=agg['om_center'],
+                    z=agg['healthy_rate'],
+                    colorscale='RdYlGn',
+                    zmin=0, zmax=1,
+                    colorbar_title='Healthy rate'
+                ))
+                thr = healthy_threshold / 100.0
+                mask = (agg['healthy_rate'] >= thr).astype(int)
+                overlay_colorscale = [
+                    [0.0, 'rgba(0,0,0,0)'],
+                    [0.5, 'rgba(0,0,0,0)'],
+                    [1.0, 'rgba(0,255,255,0.35)']
+                ]
+                hm.add_trace(go.Heatmap(
+                    x=agg['ph_center'],
+                    y=agg['om_center'],
+                    z=mask,
+                    colorscale=overlay_colorscale,
+                    showscale=False
+                ))
+                hm.add_trace(go.Contour(
+                    x=agg['ph_center'],
+                    y=agg['om_center'],
+                    z=agg['healthy_rate'],
+                    contours=dict(start=0.4, end=0.9, size=0.1, coloring='none'),
+                    line=dict(color='black', width=1),
+                    showscale=False,
+                    hoverinfo='skip'
+                ))
+                hm.update_layout(
+                    title=f'Soil Health Likelihood Map (Healthy rate; cyan = ≥{healthy_threshold}%)',
+                    xaxis_title='Soil pH (bin center)',
+                    yaxis_title='Organic Matter (%) (bin center)'
+                )
+                st.plotly_chart(hm, use_container_width=True)
 
     st.subheader("Professional Insights & Recommendations")
     col1, col2 = st.columns(2)
     with col1:
         st.info("""
         **Key Insight:**
-        When viewing 'Unhealthy Crops', large bubbles concentrate at the extremes of the pH scale (highly acidic or highly alkaline ranges), regardless of the organic matter content. This demonstrates that **improper pH is a primary limiting factor** for soil health that cannot be compensated for by organic matter alone.
+        The healthy-rate heatmap shows a consistent pattern: **near‑neutral pH (≈6–7) combined with OM ≥ ~3%** most frequently falls in green areas and the cyan overlay (≥ threshold). 
+        In contrast, **extreme pH** (too acidic or too alkaline) yields a lower healthy rate even when OM is high. The tight contour lines around pH ~5.5–6.0 and ~7.5–8.0 indicate **sharp transition boundaries** between soil profiles that are more likely to be healthy versus unhealthy.
         """)
         st.success("""
         **Potential Benefit:**
-        This insight shifts the focus of soil management. The first and most cost-effective step is **pH correction** (e.g., applying lime to acidic soils). This "unlocks" the potential of other inputs, ensuring that expensive fertilizers and organic matter are actually available to the plant, maximizing their ROI.
+        Management can focus on **shifting field pH–OM combinations into the cyan zone**:
+        1) perform **pH correction** (e.g., liming acidic soils) toward 6–7;
+        2) gradually raise **OM to ≥3%** (compost/manure/cover crops).
+        This strategy unlocks nutrient availability and increases the likelihood of fields sitting in the “high healthy‑rate” region.
         """)
     with col2:
         st.warning("""
         **AI & ML Potential:**
-        A **Recommendation System** (collaborative filtering style) could be built. It would treat fields as "users" and soil treatments as "items". By analyzing which "treatments" (soil profiles) lead to "ratings" (health outcomes), it can recommend specific actions (e.g., "add 1 ton/ha of lime") to move a field from an unhealthy profile to a healthy one.
+        Build a **classification/probabilistic model** (e.g., Gradient Boosting/Logistic) to predict healthy rate from pH and OM, then produce **action recommendations** (e.g., lime amount / OM addition) to move a pH–OM cell over a target threshold (e.g., 70%). 
+        Use SHAP/partial dependence to quantify key contour boundaries and refresh them as new data arrives.
         """)
         st.error("""
         **Potential Risk:**
-        Binning the data can sometimes mask finer-grained relationships at the boundaries of the ranges. The choice of the number of bins can influence the visual pattern.
+        The heatmap depends on **binning choices** and **data density per cell**; sparse cells can yield unstable estimates. 
+        Mitigations: choose reasonable bin counts, consider a **minimum per‑cell count** for interpretation, and validate patterns with smoothing or complementary analyses.
         """)
 
 # Case 10: Climate Impact on Crops
@@ -927,10 +1114,10 @@ elif page == "10. Climate Impact on Crops":
             y='Expected_Yield',
             color='Rainfall_Category',
             title='Yield Distribution by Crop Type and Rainfall Level',
-            color_discrete_map={ # Progressive color scale
-                'Low': '#E45756', # Red
-                'Medium': '#F28E2B', # Orange
-                'High': '#4C78A8' # Blue
+            color_discrete_map={ 
+                'Low': '#E45756', 
+                'Medium': '#F28E2B', 
+                'High': '#4C78A8' 
             },
             labels={
                 "Crop_Type": "Crop Type",
@@ -938,19 +1125,57 @@ elif page == "10. Climate Impact on Crops":
                 "Rainfall_Category": "Rainfall Level"
             }
         )
-        fig.update_traces(quartilemethod="exclusive") # Standard method for quartiles
+        fig.update_traces(quartilemethod="exclusive") 
         st.plotly_chart(fig, use_container_width=True)
+
+        summary = (plot_df
+                   .groupby(['Crop_Type', 'Rainfall_Category'])['Expected_Yield']
+                   .median()
+                   .unstack('Rainfall_Category'))
+        if summary is not None and len(summary) > 0:
+            st.markdown("Median Expected Yield (kg/ha) by Rainfall Level")
+            st.dataframe(summary.fillna(0).round(0))
+            auto_notes = []
+            detailed_notes = []
+            for crop, row in summary.iterrows():
+                low = row.get('Low', np.nan)
+                med = row.get('Medium', np.nan)
+                high = row.get('High', np.nan)
+                parts = []
+                if not np.isnan(low) and not np.isnan(med):
+                    parts.append("lower at Low than Medium" if low < med else "not lower at Low than Medium")
+                if not np.isnan(low) and not np.isnan(high):
+                    parts.append("lower at Low than High" if low < high else "not lower at Low than High")
+                trend = ", ".join(parts) if parts else "insufficient data"
+                auto_notes.append(f"- {crop}: {trend}.")
+                vals = {k: v for k, v in [('Low', low), ('Medium', med), ('High', high)] if not np.isnan(v)}
+                if vals:
+                    best_cat = max(vals, key=vals.get)
+                    diffs = []
+                    if not np.isnan(low) and not np.isnan(med) and low != med:
+                        diffs.append(f"Low vs Medium: ~{(med - low):.0f} kg/ha")
+                    if not np.isnan(low) and not np.isnan(high) and low != high:
+                        diffs.append(f"Low vs High: ~{(high - low):.0f} kg/ha")
+                    detailed_notes.append(f"- {crop}: best at {best_cat}. " + ("; ".join(diffs) if diffs else ""))
+            if auto_notes:
+                st.markdown("Yield comparison (data-driven):")
+                st.markdown("\n".join(auto_notes))
+            climate_notes_md = "\n".join(detailed_notes) if detailed_notes else "Insufficient data for detailed differences."
+        else:
+            climate_notes_md = "Insufficient data to compute rainfall effects."
 
     st.subheader("Professional Insights & Recommendations")
     col1, col2 = st.columns(2)
     with col1:
-        st.info("""
-        **Key Insight:**
-        The chart clearly shows climate specialization. Rice yield is devastated by low rainfall but thrives in high rainfall. Wheat is the most resilient, showing a stable median yield across all rainfall levels. Maize prefers medium rainfall, with yields dropping off in both very low and very high precipitation scenarios.
+        st.info(f"""
+        **Key Insight (data-driven):**
+        The per-crop median yields confirm the rainfall response patterns shown above.
+        Use these notes to verify whether Low rainfall truly underperforms for each crop:
+        {climate_notes_md}
         """)
         st.success("""
         **Potential Benefit:**
-        This analysis is critical for **strategic, long-term planning**. In regions where climate models predict decreasing rainfall, switching from Rice to Wheat could mitigate future yield loss. It allows for data-driven crop selection based on climate suitability, enhancing food security and economic stability.
+        Translate the findings into **rainfall-aware crop planning**. Where Low rainfall depresses yield for a crop, prioritize drought-tolerant varieties or schedule supplemental irrigation; where Medium/High is consistently best, align planting windows and water allocation to those regimes.
         """)
     with col2:
         st.warning("""

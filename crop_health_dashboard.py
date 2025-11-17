@@ -6,6 +6,10 @@ import numpy as np
 from scipy.stats import mannwhitneyu, ttest_ind
 from plotly.subplots import make_subplots
 import warnings
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import NearestNeighbors
+from sklearn.impute import SimpleImputer
+from scipy import stats
 
 # Workaround: suppress a known RuntimeWarning that can appear in some
 # Streamlit versions when cache expiration triggers an internal coroutine
@@ -178,98 +182,190 @@ elif page == "1. Crop Health Diagnostics":
     **Problem:** Early and accurate detection of crop stress is vital to prevent yield loss. How can we use remote sensing data to distinguish healthy from unhealthy crops?
     """)
 
+    # LEFT COLUMN – FILTERS
     col1, col2 = st.columns([1, 3])
     with col1:
         st.subheader("Filters")
-        selected_crop = st.selectbox("Select Crop Type", ['All'] + list(df['Crop_Type'].unique()))
-        
-        st.subheader("Analysis")
+
+        crop_options = ['All']
+        if 'Crop_Type' in df.columns:
+            crop_options += list(df['Crop_Type'].dropna().unique())
+
+        selected_crop = st.selectbox("Select Crop Type", crop_options)
+
+        st.subheader("Analysis Setup")
         st.markdown("""
-        This **Faceted Density Heatmap** shows the concentration of healthy vs. unhealthy crops based on their NDVI and Chlorophyll values. Each panel represents a health status, allowing for a clear comparison of their distinct data distributions and dominant clusters.
+        3D scatter using:  
+        - **Soil_Moisture** (X)  
+        - **Humidity** (Y)  
+        - **Chlorophyll_Content** (Z)  
+        Color = **Local Density (k-NN)** to view plant health clusters.
         """)
 
+        sample_size = st.slider("Sample size", 500, 20000, 5000, step=500)
+        n_neighbors = st.slider("k for Density (k-NN)", 5, 100, 20)
+        opacity = st.slider("Opacity", 0.1, 1.0, 0.8)
+
+    # RIGHT COLUMN – 3D SCATTER
     with col2:
+        # 5 feature dataset
+        needed = [
+            "Crop_Health_Label",
+            "Soil_Moisture",
+            "Humidity",
+            "Chlorophyll_Content",
+            "Temperature"
+        ]
+
+        missing = [c for c in needed if c not in df.columns]
+        if missing:
+            st.error(f"Missing required columns: {missing}")
+            st.stop()
+
         plot_df = df.copy()
         if selected_crop != 'All':
-            plot_df = df[df['Crop_Type'] == selected_crop]
+            plot_df = plot_df[plot_df['Crop_Type'] == selected_crop]
 
-        sample_df = plot_df.sample(min(20000, len(plot_df)))
+        n_take = min(sample_size, len(plot_df))
+        plot_sample = plot_df.sample(n=n_take, random_state=42) if len(plot_df) > n_take else plot_df.copy()
 
-        fig_healthy = px.density_heatmap(
-            sample_df[sample_df['Crop_Health_Label_Str'] == 'Healthy'],
-            x="NDVI", y="Chlorophyll_Content",
-            color_continuous_scale=["#d3e8f7", "#2b83ba"], # Blue sequential
-            labels={"Chlorophyll_Content": "Chlorophyll Content (a.u.)"},
-            nbinsx=30, nbinsy=30
+        imputer = SimpleImputer(strategy="median")
+        plot_sample[["Soil_Moisture", "Humidity", "Chlorophyll_Content"]] = imputer.fit_transform(
+            plot_sample[["Soil_Moisture", "Humidity", "Chlorophyll_Content"]]
         )
 
-        fig_unhealthy = px.density_heatmap(
-            sample_df[sample_df['Crop_Health_Label_Str'] == 'Unhealthy'],
-            x="NDVI", y="Chlorophyll_Content",
-            color_continuous_scale=["#fee8d6", "#e6550d"], # Orange sequential
-            labels={"Chlorophyll_Content": "Chlorophyll Content (a.u.)"},
-            nbinsx=30, nbinsy=30
+        scaler = StandardScaler()
+        X = scaler.fit_transform(
+            plot_sample[["Soil_Moisture", "Humidity", "Chlorophyll_Content"]].astype(float)
         )
 
-        fig = make_subplots(
-            rows=1, cols=2,
-            subplot_titles=("Healthy", "Unhealthy"),
-            shared_yaxes=True, shared_xaxes=True
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors).fit(X)
+        dist, _ = nbrs.kneighbors(X)
+
+        if np.allclose(dist[:, 0], 0.0):
+            dist = dist[:, 1:]
+
+
+        density = 1.0 / (dist.mean(axis=1) + 1e-12)
+        density = (density - density.min()) / (density.max() - density.min() + 1e-12)
+
+        plot_sample = plot_sample.reset_index(drop=True)
+        plot_sample["density"] = density.astype(float)
+
+        plot_sample["_label_str"] = plot_sample["Crop_Health_Label"].map({
+            1: "Healthy",
+            0: "Unhealthy"
+        }).astype(str)
+
+        for c in ["Soil_Moisture", "Humidity", "Chlorophyll_Content", "density"]:
+            plot_sample[c] = plot_sample[c].astype(float)
+
+        st.subheader("3D Scatter Plot with Density")
+
+        fig3d = px.scatter_3d(
+            plot_sample,
+            x="Soil_Moisture",
+            y="Humidity",
+            z="Chlorophyll_Content",
+            color="density",
+            color_continuous_scale="Turbo",
+            opacity=opacity,
+            symbol="_label_str",
+            hover_data={
+                "Soil_Moisture": True,
+                "Humidity": True,
+                "Chlorophyll_Content": True,
+                "Crop_Health_Label": True,
+                "density": ':.4f'
+            }
         )
 
-        fig.add_trace(fig_healthy.data[0], row=1, col=1)
-        fig.add_trace(fig_unhealthy.data[0], row=1, col=2)
-
-        fig.update_layout(
-            title_text=f"<b>Class Separation by NDVI & Chlorophyll for {selected_crop}</b>",
-            font_family="sans-serif",
-            title_font_size=20,
-            showlegend=False,
-            coloraxis=None, 
+        fig3d.update_traces(
+            marker=dict(size=4, line=dict(width=0.5, color="black"))
         )
-        fig.update_xaxes(title_text="NDVI", row=1, col=1)
-        fig.update_xaxes(title_text="NDVI", row=1, col=2)
-        fig.update_yaxes(title_text="Chlorophyll Content (a.u.)", row=1, col=1)
 
-        fig.add_vline(x=0.4, line_width=1.5, line_dash="dash", line_color="black", row=1, col='all', annotation_text="NDVI ≈ 0.4", annotation_position="top right")
-        fig.add_hline(y=1.5, line_width=1.5, line_dash="dash", line_color="black", row=1, col='all', annotation_text="Chlorophyll ≈ 1.5", annotation_position="bottom right")
-        
-        st.plotly_chart(fig, use_container_width=True)
+        fig3d.update_layout(
+            height=600,
+            width=1000,
+            margin=dict(l=0, r=0, t=40, b=0),
+            coloraxis_colorbar=dict(title="Density")
+        )
 
-    healthy_data = plot_df[plot_df['Crop_Health_Label_Str'] == 'Healthy']
-    unhealthy_data = plot_df[plot_df['Crop_Health_Label_Str'] == 'Unhealthy']
-    
-    if len(healthy_data) > 1 and len(unhealthy_data) > 1:
-        ndvi_ttest = ttest_ind(healthy_data['NDVI'], unhealthy_data['NDVI'], nan_policy='omit')
-        chloro_ttest = ttest_ind(healthy_data['Chlorophyll_Content'], unhealthy_data['Chlorophyll_Content'], nan_policy='omit')
-        
-        st.subheader("Statistical Validation (Independent t-test)")
-        st.markdown(f"""
-        - **NDVI:** The difference in mean NDVI between Healthy and Unhealthy crops is statistically significant (p < 0.001).
-        - **Chlorophyll:** The difference in mean Chlorophyll Content is also statistically significant (p < 0.001).
-        
-        *A very small p-value indicates that the observed differences are very unlikely to be due to random chance.*
-        """)
+        st.plotly_chart(fig3d, use_container_width=False)
 
+    # STATISTICAL VALIDATION (T-TEST)
+    st.subheader("Statistical Validation (Independent t-test)")
+
+    t_df = df.dropna(subset=[
+        "Soil_Moisture",
+        "Humidity",
+        "Chlorophyll_Content",
+        "Crop_Health_Label"
+    ]).copy()
+
+    healthy = t_df[t_df["Crop_Health_Label"] == 1]
+
+    unhealthy = t_df[t_df["Crop_Health_Label"] == 0]
+
+    def ttest(col):
+        a = healthy[col]; b = unhealthy[col]
+        t, p = stats.ttest_ind(a, b, equal_var=False)
+        d = (a.mean() - b.mean()) / np.sqrt(((a.std()**2)+(b.std()**2))/2)
+        return t, p, a.mean(), b.mean(), d
+
+    rows = []
+    for col in ["Soil_Moisture", "Humidity", "Chlorophyll_Content"]:
+        t, p, m1, m0, d = ttest(col)
+        rows.append([col, t, p, m1, m0, d])
+
+    ttable = pd.DataFrame(rows, columns=[
+        "Feature", "t", "p-value", "Mean Healthy", "Mean Unhealthy", "Effect Size (d)"
+    ])
+
+    st.dataframe(ttable.round(4), use_container_width=True)
+
+    # FEATURE IMPORTANCE (Fixed Values)
+    st.subheader("Feature Importance (Provided)")
+
+    fi = pd.DataFrame({
+        "Feature": ["Crop_Health_Label", "Soil_Moisture", "Humidity", "Chlorophyll_Content"],
+        "Importance": [0.639968, 0.084419, 0.040782, 0.040276]
+    })
+
+    st.dataframe(fi, use_container_width=True)
+
+    # INSIGHTS & RECOMMENDATIONS
     st.subheader("Professional Insights & Recommendations")
-    col1, col2 = st.columns(2)
-    with col1:
+
+    c1, c2 = st.columns(2)
+
+    with c1:
         st.info("""
-        **Key Insight:**
-        The faceted heatmaps clearly show two distinct population clusters. Healthy crops are tightly clustered in the high-NDVI (>0.4) and high-chlorophyll (>1.5) region (blue panel). Unhealthy crops are concentrated in the low-NDVI and low-chlorophyll area (orange panel). The statistical tests confirm this visual separation is significant, making these metrics powerful classifiers.
+        **Key Insight:**  
+        - The density-based 3D visualization reveals that healthy crops consistently cluster around stable environmental conditions — balanced soil moisture, moderate humidity levels, and high chlorophyll content. 
+        - Unhealthy crops form dense pockets when any of these parameters deviate sharply. 
+        - These clusters also highlight potential early-warning zones where crop stress begins before symptoms appear visually.
         """)
         st.success("""
-        **Potential Benefit:**
-        Implementing a real-time monitoring system based on these indices could lead to a **15-20% reduction in yield loss** by enabling targeted, early interventions (e.g., nutrient application, irrigation adjustments) before stress becomes visually apparent.
+        **Benefit:**  
+        - Enables early detection of stress hotspots before yield loss occurs.  
+        - Allows farmers or agronomists to allocate interventions more efficiently (targeted irrigation, pest control, nutrient adjustments).  
+        - Minimizes operational costs by focusing effort only on the highest-risk regions.  
+        - Improves decision-making with clearer segmentation of healthy vs. unhealthy crop groups.  
         """)
-    with col2:
+
+    with c2:
         st.warning("""
-        **AI & ML Potential:**
-        A **Classification Model** (e.g., Support Vector Machine or Random Forest) can be trained on this data to predict crop health status with high accuracy (>90%). The model would use NDVI, SAVI, Chlorophyll Content, and soil parameters as input features to create a robust "digital agronomist".
+        **AI/ML Potential:**  
+        - The chosen features (Soil Moisture, Humidity, Chlorophyll Content, Temperature) provide a strong foundation for building machine learning classifiers (Random Forest, XGBoost, LightGBM).  
+        - Density values can be used as an additional engineered feature, improving signal strength for early stress detection.  
+        - Integration with time-series sensing enables models such as LSTM or Temporal CNN to learn patterns of gradual stress buildup.  
         """)
         st.error("""
-        **Potential Risk:**
-        Over-reliance on this model without ground-truthing can be risky. Factors like specific crop genetics, growth stage, or sensor calibration errors could lead to false positives/negatives. A model is a tool for decision support, not a replacement for expert oversight.
+        **Risk:**  
+        - **Sensor Noise:** Incorrect readings can distort density, leading to false stress detection.   
+        - **Overfitting to Environmental Conditions:** Models may latch onto season-specific behavior.   
+        - **Imbalanced Data:** If healthy crops dominate the dataset, unhealthy clusters may be under-represented.  
         """)
 
 # Case 2: Pest Outbreak Management
@@ -282,104 +378,165 @@ elif page == "2. Pest Outbreak Management":
     col1, col2 = st.columns([1, 3])
     with col1:
         st.subheader("Filters")
-        crop_options = ['All'] + list(df['Crop_Type'].unique())
-        selected_crop_pest = st.selectbox("Select Crop Type", crop_options, key="pest_crop")
+        crop_list = ['All']
+        if 'Crop_Type' in df.columns:
+            crop_list += list(df['Crop_Type'].dropna().unique())
+        selected_crop_pest = st.selectbox("Select Crop Type", crop_list, key="pest_crop")
 
         st.subheader("Analysis")
         st.markdown("""
-        This enhanced scatter plot reveals the nuanced relationship between pest damage and yield.
+        This scatter plot directly correlates **Pest Damage (%)** with **Expected Yield (kg/ha)**.
+        It overlays a fitted linear trend (predicted yield) and calculates estimated economic loss using a market price per kg.
+        Each point represents a field observation; color = crop type.
         """)
+
+        sample_size = st.slider("Sample size for plotting (max points to consider)", 200, 20000, 5000, step=200)
+        market_price = st.number_input("Market price (currency per kg) — used to compute economic loss", min_value=0.0, value=0.25, step=0.01, format="%.4f")
+        show_trend = st.checkbox("Show linear trend line (overall)", value=True)
+        show_crop_slopes = st.checkbox("Show per-crop vulnerability table (slope)", value=True)
 
     with col2:
         plot_df = df.copy()
-        if selected_crop_pest != 'All':
-            plot_df = df[df['Crop_Type'] == selected_crop_pest]
-
-        sample_df = plot_df.sample(min(10000, len(plot_df)))
-
-        color_map = {
-            'Maize': '#85C1E9',  # Light Blue
-            'Rice': '#76D7C4',   # Turquoise Green
-            'Wheat': '#F7DC6F'   # Soft Orange/Yellow
-        }
-
-        fig = go.Figure()
-
-        for crop in sorted(sample_df['Crop_Type'].unique()):
-            crop_df = sample_df[sample_df['Crop_Type'] == crop]
-            fig.add_trace(go.Scatter(
-                x=crop_df['Pest_Damage'],
-                y=crop_df['Expected_Yield'],
-                mode='markers',
-                name=crop,
-                marker=dict(
-                    color=color_map.get(crop, 'grey'),
-                    opacity=0.4, # Reduce overplotting
-                    size=5
-                ),
-                hoverinfo='text',
-                text=[f"Crop: {r['Crop_Type']}<br>Pest Damage: {r['Pest_Damage']:.1f}%<br>Yield: {r['Expected_Yield']:.0f} kg/ha" for i, r in crop_df.iterrows()]
-            ))
-
-        if selected_crop_pest == 'All':
-            trend_fig = px.scatter(
-                sample_df, x='Pest_Damage', y='Expected_Yield', color='Crop_Type',
-                trendline='lowess', color_discrete_map=color_map
-            )
+        required_cols = ['Pest_Damage', 'Expected_Yield', 'Crop_Type']
+        missing = [c for c in required_cols if c not in plot_df.columns]
+        if missing:
+            st.error(f"Missing required columns: {missing}. Please ensure dataset contains Pest_Damage, Expected_Yield, and Crop_Type.")
         else:
-            trend_fig = px.scatter(
-                sample_df, x='Pest_Damage', y='Expected_Yield',
-                trendline='lowess', color_discrete_sequence=[color_map.get(selected_crop_pest)]
+            if selected_crop_pest != 'All':
+                plot_df = plot_df[plot_df['Crop_Type'] == selected_crop_pest]
+
+            n_take = min(sample_size, len(plot_df))
+            plot_sample = plot_df.sample(n=n_take, random_state=42) if len(plot_df) > n_take else plot_df.copy()
+
+            imputer = SimpleImputer(strategy="median")
+            plot_sample[['Pest_Damage', 'Expected_Yield']] = imputer.fit_transform(plot_sample[['Pest_Damage', 'Expected_Yield']])
+
+            plot_sample['Pest_Damage'] = plot_sample['Pest_Damage'].astype(float)
+            plot_sample['Expected_Yield'] = plot_sample['Expected_Yield'].astype(float)
+
+            fig_scatter = px.scatter(
+                plot_sample,
+                x='Pest_Damage',
+                y='Expected_Yield',
+                color='Crop_Type',
+                title=f'Impact of Pest Damage on Yield for {selected_crop_pest} Crops',
+                labels={'Pest_Damage': 'Pest Damage (%)', 'Expected_Yield': 'Expected Yield (kg/ha)'},
+                hover_data=['Crop_Type']
             )
 
-        for trace in trend_fig.data:
-            if 'trendline' in trace.name:
-                crop_name = trace.name.split(',')[0]
-                trace.line.width = 3 # Make trendline thicker
-                trace.name = f"Trend ({crop_name})" # Clarify legend
-                fig.add_trace(trace)
+            fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-        fig.add_vrect(
-            x0=70, x1=100,
-            fillcolor="rgba(231, 76, 60, 0.15)", line_width=0,
-            annotation_text="High-Risk Zone",
-            annotation_position="top left",
-            annotation=dict(font_size=12, font_color="white", bgcolor="red")
-        )
+            for trace in fig_scatter.data:
+                fig.add_trace(trace, secondary_y=False)
 
-        fig.update_layout(
-            title=f'<b>Impact of Pest Damage on Yield for {selected_crop_pest} Crops</b>',
-            xaxis_title='Pest Damage (%)',
-            yaxis_title='Expected Yield (kg/ha)',
-            legend_title_text='Crop Type',
-            font_family="sans-serif",
-            title_font_size=20,
-            template="plotly_dark" # Use a dark theme for better contrast with soft colors
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            if show_trend and len(plot_sample) >= 2:
+                x = plot_sample['Pest_Damage'].to_numpy()
+                y = plot_sample['Expected_Yield'].to_numpy()
+                coeffs = np.polyfit(x, y, 1)  
+                slope, intercept = coeffs[0], coeffs[1]
 
+                x_line = np.linspace(plot_sample['Pest_Damage'].min(), plot_sample['Pest_Damage'].max(), 200)
+                y_line = slope * x_line + intercept
+
+                fig.add_trace(
+                    go.Scatter(x=x_line, y=y_line, mode='lines', name='Linear trend (yield)', line=dict(color='black', width=2, dash='dash')),
+                    secondary_y=False
+                )
+
+                baseline_yield = intercept  
+                econ_loss = (baseline_yield - y_line) * float(market_price)
+                econ_loss = np.maximum(econ_loss, 0.0)
+
+                fig.add_trace(
+                    go.Scatter(x=x_line, y=econ_loss, mode='lines', name='Estimated economic loss', line=dict(color='firebrick', width=2)),
+                    secondary_y=True
+                )
+
+                slope_per_10 = slope * 10
+                st.markdown(f"**Overall trend:** slope = {slope:.3f} kg/ha per 1% pest damage (≈ {slope_per_10:.1f} kg/ha per 10%). Baseline yield (0% pest) ≈ {baseline_yield:.1f} kg/ha.")
+
+            fig.update_xaxes(title_text="Pest Damage (%)")
+            fig.update_yaxes(title_text="Expected Yield (kg/ha)", secondary_y=False)
+            fig.update_yaxes(title_text=f"Estimated Economic Loss (currency per ha) — price={market_price:.4f} per kg", secondary_y=True)
+
+            fig.update_layout(height=600, width=900, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0.01))
+
+            st.plotly_chart(fig, use_container_width=True)
+
+    if show_crop_slopes:
+        st.subheader("Crop vulnerability (linear slope per crop)")
+        slopes = []
+        for crop, g in df.dropna(subset=['Pest_Damage', 'Expected_Yield']).groupby('Crop_Type'):
+            if len(g) >= 5:
+                xg = g['Pest_Damage'].astype(float).to_numpy()
+                yg = g['Expected_Yield'].astype(float).to_numpy()
+                m, b = np.polyfit(xg, yg, 1)
+                slopes.append({'Crop_Type': crop, 'slope': float(m), 'count': len(g)})
+        if len(slopes) == 0:
+            st.info("Not enough data per crop to compute slopes. Need >=5 observations per crop.")
+        else:
+            slopes_df = pd.DataFrame(slopes)
+            slopes_df['abs_slope'] = slopes_df['slope'].abs()
+            slopes_df = slopes_df.sort_values('slope')
+            st.dataframe(slopes_df[['Crop_Type', 'slope', 'count']].rename(columns={'slope': 'slope (kg/ha per % damage)'}).round(4), use_container_width=True)
+            top = slopes_df.head(1).iloc[0]
+            st.markdown(f"**Most vulnerable crop:** {top['Crop_Type']} (slope = {top['slope']:.3f} kg/ha per 1% pest damage)")
+
+    # --- Feature Importance ---
+    st.subheader("Feature Importance Insights")
+
+    st.markdown("**Expected Yield (Regression) — Feature Importance**")
+    yield_features = {
+        'NDVI': 0.174586,
+        'Chlorophyll_Content': 0.174343,
+        'Temperature': 0.174252,
+        'Soil_Moisture': 0.173751,
+        'Humidity': 0.173177,
+        'Pest_Damage': 0.129890
+    }
+    yield_df = pd.DataFrame({
+        'Feature': list(yield_features.keys()),
+        'Importance': list(yield_features.values())
+    }).sort_values('Importance', ascending=False)
+    st.dataframe(yield_df.style.format({"Importance": "{:.4f}"}), use_container_width=True)
+
+    st.markdown("**Pest Vulnerability (Classification) — Feature Importance**")
+    pest_features = {
+        'Humidity': 0.200288,
+        'Temperature': 0.200040,
+        'Soil_Moisture': 0.200002,
+        'NDVI': 0.199974,
+        'Chlorophyll_Content': 0.199696
+    }
+    pest_df = pd.DataFrame({
+        'Feature': list(pest_features.keys()),
+        'Importance': list(pest_features.values())
+    }).sort_values('Importance', ascending=False)
+    st.dataframe(pest_df.style.format({"Importance": "{:.6f}"}), use_container_width=True)
+
+    # --- Professional Insights & Recommendations ---
     st.subheader("Professional Insights & Recommendations")
-    col1, col2 = st.columns(2)
-    with col1:
+    col1a, col2a = st.columns(2)
+    with col1a:
         st.info("""
         **Key Insight:**
-        The impact of pest damage on yield is not uniform across all crop types. Wheat shows a predictable decline in yield as pest damage increases, making it a reliable indicator for intervention. For rice and maize, high variability suggests that pest damage is just one piece of a more complex puzzle, and yield is co-dependent on other factors.
+        The trendline shows a clear negative relationship: higher pest damage leads to lower expected yield. By converting yield drops into monetary loss using market price, we quantify economic impact per unit damage.
         """)
         st.success("""
         **Potential Benefit:**
-        By developing a pest early warning system, pesticide use can be targeted and reduced by up to **40%**. This not only cuts costs but also minimizes environmental impact and improves the marketability of the produce (less chemical residue).
+        Using this visualization, decision-makers can prioritize interventions on crops/fields where the slope (vulnerability) is steepest — those provide the highest ROI when treated early.
         """)
-    with col2:
+    with col2a:
         st.warning("""
         **AI & ML Potential:**
-        1. **Computer Vision:** Use drone/satellite imagery to train a CNN model to automatically detect and quantify `Pest_Hotspots` and `Pest_Damage`.
-        2. **Time Series Forecasting:** Use models like ARIMA or LSTM on weather and historical pest data to predict high-risk periods for outbreaks.
+        1. Train regression models to predict yield loss from pest damage and environmental features; use predictions to estimate economic loss at scale.
+        2. Combine with spatial data (field polygons) to create loss heatmaps for resource allocation.
         """)
         st.error("""
         **Potential Risk:**
-        Pests can develop resistance to treatments. An AI system recommending the same intervention repeatedly could accelerate this. The model must incorporate a strategy for rotating treatment types. Furthermore, prediction accuracy is highly dependent on timely and high-resolution imagery.
+        Over-simplifying with a single linear trend ignores non-linear thresholds and interactions (e.g., stage-of-growth). Ground-truth validation and season-aware models are essential.
         """)
-
+        
 # Case 3: Yield Optimization Factors
 elif page == "3. Yield Optimization Factors":
     st.header("3. Yield Optimization Factors")

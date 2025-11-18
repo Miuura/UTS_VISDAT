@@ -550,33 +550,35 @@ elif page == "3. Yield Optimization Factors":
         num_features = st.slider(
             "Number of top features to display",
             min_value=3,
-            max_value=15,
-            value=10
+            max_value=16,
+            value=16
         )
+
+    with col2:
         st.subheader("Analysis")
         st.markdown("""
         This bar chart shows the features with the strongest correlation to **Expected Yield**. Bars pointing to the right indicate a positive correlation (increasing the feature tends to increase yield), while bars pointing left indicate a negative correlation. This provides a clear, ranked view of the most impactful factors.
         """)
-
-    with col2:
-        corr_matrix = df.select_dtypes(include=np.number).corr()
-        yield_corr = corr_matrix[['Expected_Yield']].drop('Expected_Yield').sort_values(by='Expected_Yield', ascending=False)
         
-        top_pos = yield_corr.head(num_features)
-        top_neg = yield_corr.tail(num_features)
-        
-        # Combine for plotting
-        plot_corr = pd.concat([top_pos, top_neg]).sort_values(by='Expected_Yield')
+    corr_matrix = df.select_dtypes(include=np.number).corr()
+    yield_corr = corr_matrix[['Expected_Yield']].drop('Expected_Yield').sort_values(by='Expected_Yield', ascending=False)
+    
+    top_pos = yield_corr.head(num_features)
+    top_neg = yield_corr.tail(num_features)
+    
+    # Combine for plotting
+    plot_corr = pd.concat([top_pos, top_neg]).sort_values(by='Expected_Yield')
 
-        fig = px.bar(plot_corr,
-                     x='Expected_Yield',
-                     y=plot_corr.index,
-                     orientation='h',
-                     title=f'Top {num_features*2} Factors Correlated with Expected Yield',
-                     color='Expected_Yield',
-                     color_continuous_scale='RdBu_r',
-                     labels={'Expected_Yield': 'Correlation Coefficient', 'y': 'Feature'})
-        st.plotly_chart(fig, use_container_width=True)
+    fig = px.bar(plot_corr,
+                    x='Expected_Yield',
+                    y=plot_corr.index,
+                    orientation='h',
+                    title=f'Top {num_features*2} Factors Correlated with Expected Yield',
+                    color='Expected_Yield',
+                    color_continuous_scale='RdBu_r',
+                    labels={'Expected_Yield': 'Correlation Coefficient', 'y': 'Feature'},
+                    height=600)
+    st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Professional Insights & Recommendations")
     col1, col2 = st.columns(2)
@@ -611,83 +613,93 @@ elif page == "4. Precision Irrigation Strategy":
         st.subheader("Filters")
         selected_crop_irrigation = st.selectbox("Select Crop Type", df['Crop_Type'].unique(), key="irrigation_crop")
         
+    with col2:
         st.subheader("Analysis")
         st.markdown("""
-        This violin plot shows the distribution of **Soil Moisture (%)** for both healthy and unhealthy crops. The shape indicates data density, while the inner box plot shows the median and interquartile range. A statistical test is performed to validate the observed differences.
-        """)
-
-    with col2:
-        plot_df = df[df['Crop_Type'] == selected_crop_irrigation]
+        This scatter plot visualizes the relationship between **Expected Yield** and **NDVI**, with points colored by 5 bins of **Soil Moisture**. This multi-variate analysis aims to identify the specific moisture range that co-occurs with high yield and high vegetative health.
+    """)
         
-        # Define pastel colors
-        pastel_colors = {'Healthy': 'rgba(144, 238, 144, 0.6)', 'Unhealthy': 'rgba(255, 182, 193, 0.6)'}
+    plot_df = df[df['Crop_Type'] == selected_crop_irrigation]
+    
+    plot_df['moisture_cat'] = pd.cut(df['Soil_Moisture'], bins=5)
+    
+    fig = px.scatter(
+        plot_df,
+        x='Expected_Yield',
+        y='NDVI',
+        color='moisture_cat',
+        color_continuous_scale=px.colors.sequential.Plasma,
+        opacity=0.3,
+        title=f'Soil Moisture Distribution for Healthy vs. Unhealthy {selected_crop_irrigation}',
+        height=600
+    )
         
-        fig = px.violin(
-            plot_df,
-            x='Crop_Health_Label_Str',
-            y='Soil_Moisture',
-            color='Crop_Health_Label_Str',
-            box=True,
-            points=False,
-            title=f'Soil Moisture Distribution for Healthy vs. Unhealthy {selected_crop_irrigation}',
-            color_discrete_map={'Healthy': 'lightgreen', 'Unhealthy': 'lightcoral'},
-            labels={'Crop_Health_Label_Str': 'Crop Health Condition', 'Soil_Moisture': 'Soil Moisture (%)'}
-        )
-        
-        fig.update_traces(
-            meanline_visible=True,
-            marker=dict(opacity=0.7)
-        )
-        
-        fig.update_layout(
-            font_family="sans-serif",
-            title_font_size=20,
-            legend_title_text=None
-        )
-        fig.update_xaxes(showgrid=False)
-        fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor='lightgray')
-        st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        font_family="sans-serif",
+        title_font_size=20,
+        legend_title_text='Soil Moisture Bin'
+    )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor='lightgray')
+    st.plotly_chart(fig, use_container_width=True)
 
     # Statistical Analysis
-    healthy_moisture = plot_df[plot_df['Crop_Health_Label_Str'] == 'Healthy']['Soil_Moisture'].dropna()
-    unhealthy_moisture = plot_df[plot_df['Crop_Health_Label_Str'] == 'Unhealthy']['Soil_Moisture'].dropna()
+    from scipy.stats import f_oneway # Ensure this import is present
 
-    st.subheader("Statistical Validation (Mann-Whitney U Test)")
-    if len(healthy_moisture) > 1 and len(unhealthy_moisture) > 1:
-        stat, p_value = mannwhitneyu(healthy_moisture, unhealthy_moisture, alternative='two-sided')
-        
-        healthy_median = healthy_moisture.median()
-        unhealthy_median = unhealthy_moisture.median()
-        
+    st.subheader("Statistical Validation (ANOVA on Expected Yield by Moisture Bin)")
+
+    bin_data = []
+    unique_bins = sorted(plot_df['moisture_cat'].dropna().unique())
+
+    for bin_label in unique_bins:
+        yields = plot_df[plot_df['moisture_cat'] == bin_label]['Expected_Yield'].dropna()
+        if len(yields) > 1:
+            bin_data.append(yields)
+
+    st.markdown(f"**Average Expected Yield per Soil Moisture Bin for {selected_crop_irrigation}:**")
+
+    yield_means = {}
+    for i, bin_label in enumerate(unique_bins):
+        if i < len(bin_data):
+            mean_yield = bin_data[i].mean()
+            yield_means[bin_label] = mean_yield
+            st.markdown(f"- **Bin {bin_label}:** `{mean_yield:.2f}`")
+
+    # ANOVA
+    if len(bin_data) >= 2 and all(len(b) > 1 for b in bin_data):
+        stat, p_value = f_oneway(*bin_data)
+
         st.markdown(f"""
-        - **Median Soil Moisture (Healthy):** `{healthy_median:.2f}%`
-        - **Median Soil Moisture (Unhealthy):** `{unhealthy_median:.2f}%`
-        - **P-value:** `{p_value:.2e}`
+        - **P-value (ANOVA):** `{p_value:.2e}`
         """)
-        if p_value < 0.05:
-            st.success("The difference in soil moisture distribution between healthy and unhealthy crops is statistically significant.")
-        else:
-            st.warning("The difference in soil moisture distribution is not statistically significant, suggesting other factors are more dominant for this crop.")
 
+        if p_value < 0.05:
+            optimal_bin = max(yield_means, key=yield_means.get)
+            st.success(f"The difference in average yield among the 5 soil moisture categories is **statistically significant** (P < 0.05). The bin with the highest average yield is **{optimal_bin}**.")
+        else:
+            st.warning("The difference in yield across soil moisture categories is not statistically significant, suggesting moisture is not the primary limiting factor for this crop.")
+    else:
+        st.warning("Insufficient data to perform ANOVA on all soil moisture categories.")
+        
     st.subheader("Professional Insights & Recommendations")
     col1, col2 = st.columns(2)
     with col1:
         st.info("""
         **Key Insight:**
-        For most crops, there is a clear "sweet spot" for soil moisture. The median soil moisture for healthy crops is significantly different from unhealthy ones, as confirmed by the Mann-Whitney U test. The distribution for unhealthy crops is often wider, indicating that both too little (drought stress) and too much (root rot, nutrient leaching) moisture are detrimental.
+        The visualization reveals a strong positive correlation between **NDVI** (vegetative health) and **Expected Yield**. The highest density of data points (the 'sweet spot') occurs where the color representing the **intermediate/optimal** soil moisture bins is concentrated. This confirms that an **optimal moisture range** exists, but its boundaries are narrow and critical for maximizing both health and output.
         """)
         st.success("""
-        **Potential Benefit:**
-        Implementing a smart irrigation system based on real-time soil moisture data can reduce water consumption by **20-30%** while simultaneously improving crop health by avoiding stress. This translates to direct cost savings and promotes sustainable water management.
+        **Potential Benefit (Precision Irrigation):**
+        Identifying the **highest-yielding moisture bin** (e.g., (17.0, 23.0)) provides **specific numerical limits** for irrigation control. By programming smart irrigation systems to maintain soil moisture strictly within this optimal range, farmers can mitigate water stress (drought/saturation) and ensure water resources directly contribute to maximizing yield potential.
         """)
     with col2:
         st.warning("""
         **AI & ML Potential:**
-        A **Reinforcement Learning (RL)** agent could be trained to create a dynamic irrigation schedule. The agent's "state" would include soil moisture, weather forecast, and crop growth stage. Its "actions" would be to irrigate or not, and the "reward" would be based on maintaining crop health while minimizing water use.
+        Since the plot shows significant overlap across all 5 moisture bins in the high-yield area, it suggests that **moisture is a supporting factor, not a single determinant.** A robust **Yield Prediction Regression Model** should be trained using a combination of inputs like **Soil Moisture, Temperature, and Soil pH** simultaneously to achieve the highest accuracy in advising irrigation needs.
         """)
         st.error("""
         **Potential Risk:**
-        The accuracy of this analysis depends heavily on the correct placement and calibration of soil moisture sensors. A single faulty sensor could lead to poor irrigation decisions for an entire field. Redundancy and regular maintenance of sensors are critical.
+        While an optimal bin is identified, this range can shift dynamically depending on the **crop's growth stage** (`Crop_Growth_Stage`). Using static bin limits throughout the entire season could lead to over-watering in early stages or under-watering during peak vegetative phases. The irrigation strategy must be **adaptive** and incorporate temporal growth data.
         """)
 
 # Case 5: Environmental Stress Analysis

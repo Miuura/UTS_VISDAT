@@ -605,7 +605,7 @@ elif page == "3. Yield Optimization Factors":
 elif page == "4. Precision Irrigation Strategy":
     st.header("4. Precision Irrigation Strategy")
     st.markdown("""
-    **Problem:** Over- or under-watering are common issues that stress plants and waste water. What is the optimal soil moisture range for different crops?
+    **Problem:** Crops respond differently to water availability, and improper moisture levels can significantly limit yield potential. What soil moisture range supports the best yield outcomes for each crop type?
     """)
 
     col1, col2 = st.columns([1, 3])
@@ -630,7 +630,7 @@ elif page == "4. Precision Irrigation Strategy":
         color='moisture_cat',
         color_continuous_scale=px.colors.sequential.Plasma,
         opacity=0.3,
-        title=f'Soil Moisture Distribution for Healthy vs. Unhealthy {selected_crop_irrigation}',
+        title=f'Multi-Variate Analysis of {selected_crop_irrigation} Yield and Health based on Soil Moisture Levels',
         height=600
     )
         
@@ -643,44 +643,34 @@ elif page == "4. Precision Irrigation Strategy":
     fig.update_yaxes(showgrid=True, gridwidth=0.5, gridcolor='lightgray')
     st.plotly_chart(fig, use_container_width=True)
 
-    # Statistical Analysis
-    from scipy.stats import f_oneway # Ensure this import is present
+    st.subheader("Key Conclusions for Optimal Soil Moisture")
+    st.markdown("""
+    **Maize (Corn)** requires a balanced environment. In the plot, the highest density of healthy, high-yield crops is represented by the **Green cluster**, which corresponds to the moderate moisture range of **17.0 – 23.0**. This sweet spot avoids the stress of dry soil without oversaturating the roots.
 
-    st.subheader("Statistical Validation (ANOVA on Expected Yield by Moisture Bin)")
+    **Wheat** thrives in significantly drier conditions. The visual evidence is clear: the **Green data points** representing the lowest moisture bin of **4.97 – 11.0** dominate the high-performance region. As moisture increases (represented by red and blue dots), the yield density visibly disperses, confirming wheat's preference for low moisture.
 
-    bin_data = []
-    unique_bins = sorted(plot_df['moisture_cat'].dropna().unique())
+    **Rice** is confirmed as a water-intensive crop. The optimal performance is visualized by the **Green points** clustered in the high moisture range of **23.0 – 29.0**. Unlike wheat, rice shows its best stability and yield in these wetter conditions, with the cluster stretching further into the high-yield territory than the drier bins.
+    """)
 
-    for bin_label in unique_bins:
-        yields = plot_df[plot_df['moisture_cat'] == bin_label]['Expected_Yield'].dropna()
-        if len(yields) > 1:
-            bin_data.append(yields)
+    crop_data = {
+        "Crop Type": [
+            ":material/grass: Wheat",
+            ":material/eco: Maize",
+            ":material/water_drop: Rice",
+        ],
+        "Water Needs": [
+            ":orange[Low]", 
+            ":green[Moderate]", 
+            ":blue[High]"
+        ],
+        "Optimal Range": [
+            "4.97 — 11.0", 
+            "17.0 — 23.0", 
+            "23.0 — 29.0"
+        ],
+    }
+    st.table(crop_data)
 
-    st.markdown(f"**Average Expected Yield per Soil Moisture Bin for {selected_crop_irrigation}:**")
-
-    yield_means = {}
-    for i, bin_label in enumerate(unique_bins):
-        if i < len(bin_data):
-            mean_yield = bin_data[i].mean()
-            yield_means[bin_label] = mean_yield
-            st.markdown(f"- **Bin {bin_label}:** `{mean_yield:.2f}`")
-
-    # ANOVA
-    if len(bin_data) >= 2 and all(len(b) > 1 for b in bin_data):
-        stat, p_value = f_oneway(*bin_data)
-
-        st.markdown(f"""
-        - **P-value (ANOVA):** `{p_value:.2e}`
-        """)
-
-        if p_value < 0.05:
-            optimal_bin = max(yield_means, key=yield_means.get)
-            st.success(f"The difference in average yield among the 5 soil moisture categories is **statistically significant** (P < 0.05). The bin with the highest average yield is **{optimal_bin}**.")
-        else:
-            st.warning("The difference in yield across soil moisture categories is not statistically significant, suggesting moisture is not the primary limiting factor for this crop.")
-    else:
-        st.warning("Insufficient data to perform ANOVA on all soil moisture categories.")
-        
     st.subheader("Professional Insights & Recommendations")
     col1, col2 = st.columns(2)
     with col1:

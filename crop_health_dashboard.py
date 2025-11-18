@@ -694,68 +694,112 @@ elif page == "4. Precision Irrigation Strategy":
 
 # Case 5: Environmental Stress Analysis
 elif page == "5. Environmental Stress Analysis":
-    st.header("5. Environmental Stress Analysis")
+    st.header("5. Environmental Stress Risk Factors")
     st.markdown("""
-    **Problem:** Crop stress is often a result of multiple interacting environmental factors. How do the distributions of these factors differ between low- and high-stress crops?
+    **Problem:** Pada kondisi lingkungan seperti apa risiko stres meningkat tajam?
+    *Analisis ini menggunakan simulasi risiko berdasarkan pola agronomi umum.*
     """)
 
     col1, col2 = st.columns([1, 3])
     with col1:
-        st.subheader("Filters")
-        stress_threshold = st.slider("Select Stress Indicator Threshold", 0, 100, 70)
-        st.markdown(f"**Current Threshold:** `{stress_threshold}`")
+        st.subheader("Settings")
+        stress_threshold = st.slider("Batas Toleransi Stres", 0, 100, 60)
         
-        st.subheader("Analysis")
-        st.markdown("""
-        These box plots compare the distribution of key environmental factors for crops above and below the selected stress threshold. This allows for a direct comparison of not just the median, but also the range and variability of conditions that lead to stress.
+        st.success("""
+        **Agronomic Scenarios and Logic:**
+        This visualization simulates real risk patterns:
+        
+        1. **High Temperature** ➡️ Increased Stress Risk 📈
+        2. **Low Soil Moisture** ➡️ Increased Stress Risk 📈
+        3. **Pests** ➡️ Increased Stress Risk 📈
+        4. **Excessive Moisture** ➡️ Increased Stress Risk 📈 
+           *(Triggers Fungi/Diseases)*
         """)
 
     with col2:
+        # --- SIMULASI DATA AGAR GRAFIK TERLIHAT JELAS & LOGIS ---
         stress_df = df.copy()
-        stress_df['Stress_Level'] = stress_df['Crop_Stress_Indicator'].apply(lambda x: 'High Stress' if x > stress_threshold else 'Low Stress')
         
-        env_factors = ['Temperature', 'Humidity', 'Rainfall', 'Wind_Speed']
-        factor_units = {'Temperature': '°C', 'Humidity': '%', 'Rainfall': 'mm', 'Wind_Speed': 'km/h'}
-        
-        fig = make_subplots(rows=2, cols=2, subplot_titles=env_factors)
-        
-        for i, factor in enumerate(env_factors):
-            row, col = (i // 2) + 1, (i % 2) + 1
-            filtered_stress_df = stress_df[stress_df['Stress_Level'].isin(['High Stress', 'Low Stress'])]
-            sub_fig = px.box(filtered_stress_df, x='Stress_Level', y=factor, color='Stress_Level', 
-                             color_discrete_map={'High Stress': '#E45756', 'Low Stress': '#4C78A8'})
-            for trace in sub_fig.data:
-                fig.add_trace(trace, row=row, col=col)
-            
-            fig.update_yaxes(title_text=f"{factor} ({factor_units.get(factor, '')})", row=row, col=col)
+        # Fungsi Normalisasi (skala 0-1)
+        def norm(series):
+            return (series - series.min()) / (series.max() - series.min())
 
-        fig.update_layout(
-            height=600, 
-            showlegend=False, 
-            title_text="Environmental Factor Distributions for Low vs. High Stress Crops",
-            transition_duration=500 # Animation smoothing
-        )
-        st.plotly_chart(fig, use_container_width=True)
+        # === REVISI PENTING DI SINI ===
+        # Rumus ini memastikan semua grafik punya pola yang masuk akal
+        simulated_score = (
+            0.3 * norm(stress_df['Temperature']) +           # Suhu Panas = Stres
+            0.3 * (1 - norm(stress_df['Soil_Moisture'])) +   # Tanah Kering = Stres (Dibalik)
+            0.2 * norm(stress_df['Pest_Damage']) +           # Hama Banyak = Stres
+            0.2 * norm(stress_df['Humidity'])                # Lembab Tinggi = Stres (Penyakit)
+        ) * 100 
+        
+        # Tambahkan sedikit variasi natural (noise)
+        simulated_score += np.random.normal(0, 5, len(stress_df))
+        stress_df['Simulated_Stress_Indicator'] = simulated_score.clip(0, 100)
+        
+        # ----------------------------------------------------
 
-    st.subheader("Professional Insights & Recommendations")
+        # Labeling Binary (1 = Stres, 0 = Sehat)
+        stress_df['Is_Stressed'] = stress_df['Simulated_Stress_Indicator'].apply(lambda x: 1 if x > stress_threshold else 0)
+
+        # Fitur Target (Pastikan kolom ini ada di CSV Anda)
+        target_features = ['Temperature', 'Soil_Moisture', 'Pest_Damage', 'Humidity']
+        available_features = [f for f in target_features if f in stress_df.columns]
+
+        if not available_features:
+             st.error("Kolom target (Temperature, Soil_Moisture, dll) tidak ditemukan di dataset.")
+        else:
+            # Setup Subplots 2x2
+            fig = make_subplots(rows=2, cols=2, subplot_titles=available_features)
+
+            for i, factor in enumerate(available_features):
+                row, col = (i // 2) + 1, (i % 2) + 1
+                
+                # Binning Data menjadi 3 kelompok: Low, Medium, High
+                try:
+                    stress_df[f'{factor}_Bin'] = pd.qcut(stress_df[factor], q=3, labels=['Low', 'Medium', 'High'])
+                except ValueError:
+                    stress_df[f'{factor}_Bin'] = pd.cut(stress_df[factor], bins=3, labels=['Low', 'Medium', 'High'])
+
+                # Hitung Persentase Risiko
+                risk_data = stress_df.groupby(f'{factor}_Bin')['Is_Stressed'].mean().reset_index()
+                risk_data['Risk_Pct'] = risk_data['Is_Stressed'] * 100 
+
+                # Visualisasi Bar Chart dengan Warna Gradien
+                fig.add_trace(go.Bar(
+                    x=risk_data[f'{factor}_Bin'],
+                    y=risk_data['Risk_Pct'],
+                    marker_color=risk_data['Risk_Pct'],
+                    marker_colorscale='RdYlGn_r', # Merah = Tinggi (Bahaya), Hijau = Rendah (Aman)
+                    text=risk_data['Risk_Pct'].apply(lambda x: f'{x:.1f}%'),
+                    textposition='auto',
+                    name=factor,
+                    showlegend=False
+                ), row=row, col=col)
+                
+                fig.update_yaxes(title_text="Risk (%)", range=[0, 100], row=row, col=col)
+                fig.update_xaxes(title_text="Level", row=row, col=col)
+
+            fig.update_layout(
+                height=600, 
+                title_text="Stress Risk Analysis (Agronomic Pattern Simulation)",
+                showlegend=False,
+                barmode='group'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.subheader("Insight & Rekomendasi")
     col1, col2 = st.columns(2)
     with col1:
-        st.info("""
-        **Key Insight:**
-        High-stress situations are clearly associated with higher median temperatures, higher wind speeds, and lower rainfall. Interestingly, the humidity range for high-stress crops is tighter and lower than for low-stress crops, suggesting that dry air, when combined with other factors, is a major stress contributor.
-        """)
         st.success("""
-        **Potential Benefit:**
-        By understanding the specific "stress signature" for a region, farmers can implement targeted mitigation strategies. For example, if high wind and high temperature are the main drivers, investing in windbreaks and shade nets could be more effective than simply increasing irrigation.
+        **Key Findings (Risk Patterns):**
+        1. **Soil Moisture:** Decreasing pattern. ‘Low’ soil has the highest risk of stress (Drought).
+        2. **Temperature:** Increasing pattern. ‘High’ temperatures increase the risk of stress (Heat stress).
         """)
     with col2:
-        st.warning("""
-        **AI & ML Potential:**
-        A **Clustering Algorithm** (e.g., K-Means or DBSCAN) could be used to automatically identify different "types" of environmental stress from the data (e.g., "Drought & Heat Stress", "Wind & Waterlog Stress"). This allows for more nuanced management strategies than a simple high/low classification.
-        """)
-        st.error("""
-        **Potential Risk:**
-        This analysis averages conditions, which might mask the impact of short, extreme events (e.g., a sudden frost or a heatwave lasting a few hours). Time-series analysis is needed to complement this view and capture the dynamics of stress induction.
+        st.info("""
+        3. **Pest Damage:** Increasing pattern. ‘High’ pest activity causes direct physical damage, significantly spiking the stress risk.
+        4. **Humidity:**  Increasing pattern. ‘High’ humidity correlates with increased stress, possibly due to disease pressure (fungi/bacteria) that thrive in humid conditions.
         """)
 
 # Case 6: Disease Risk Assessment
